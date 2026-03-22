@@ -30,6 +30,8 @@
 
 ### 1.3 Team structure and flow
 
+**Assumed team:** 1 leader (Tech Lead / Scrum Master), 7 developers, 3 QA — 10 people total. The leader owns priorities, blockers, phasing, and risk; devs and QA work in parallel with shift-left quality.
+
 ```text
   Backlog → Refinement (QA + dev) → Sprint Planning → Development (QA in parallel) → PR Review → Merge → Deploy
        ↑       QA defines acceptance criteria, test scenarios                               |
@@ -42,18 +44,34 @@
 
 **Reviews:** At least one approval; optional: pair programming for complex changes. Linters and tests run on PR; no merge until green.
 
+### 1.4 Team allocation (7 devs + 3 QA)
+
+| Phase | Devs (7) | QA (3) |
+|-------|----------|--------|
+| **Phase 1** | 2–3: event store, projection, task CRUD, GET /history. 1–2: comments, attachments. 1: auth, API skeleton. 1: CI/CD, local dev env. | 1: refinement + acceptance criteria. 1: API test automation. 1: exploratory + integration tests. |
+| **Phase 2 (parallel)** | Team A (4): Phase 1 completion. Team B (3): Notification service + SignalR (against event contract). | 1: SignalR tests. 1: Notification flow tests. 1: E2E + exploratory. |
+| **Phase 3** | 4–5: Web UI (SPA). 2: scheduler, prod pipeline, monitoring. | 3: E2E, UAT support, accessibility. |
+
+**Speed-up with this team:** Use parallel delivery (§4.1.1): define event contract in week 1; 4 devs on Phase 1 core, 3 on Notification + SignalR. Limit WIP per person (e.g. 2 items); swarm on blockers. QA embedded per stream, not a bottleneck at the end.
+
 ---
 
 ## 2. Speeding up delivery 2–3x (or more) without overtime
 
+**Target outcome:** We aim to **reduce cycle time by ~50%** (e.g. 6 days → 3 days from story start to Done) and **increase throughput by ~2x** (e.g. 24 → 40+ points per sprint) within **3–6 months** of adopting the techniques below. Measured via DORA-inspired metrics (Section 3): cycle time, deployment frequency, lead time for changes, and change failure rate.
+
 Speed-up comes from **removing waste**, **parallelizing work**, and **automating** — not from longer hours.
 
+**Parallel working approach:** Define the event contract in week 1, then run two streams in parallel. Team A (4 devs) builds Phase 1 core (event store, CRUD, comments, attachments); Team B (3 devs) builds the Notification service and SignalR against that contract. Both progress independently and integrate when the write path is ready; QA is split per stream. See [§1.4](05-development-process.md#14-team-allocation-7-devs--3-qa) and [§4.1.1](05-development-process.md#411-parallel-delivery-fast-timeline-multiple-teams).
+
 ### 2.1 Techniques and tools
+
+*Expected gains below are **illustrative**; validate against DORA metrics in Section 3.*
 
 | Lever | Approach | Expected gain |
 |-------|----------|---------------|
 | **Reduce cycle time** | CI/CD (build < 10 min, deploy to Dev on merge); fail fast | 30–50% fewer “waiting for build/deploy” blocks. |
-| **Parallelize features** | Feature flags; slice stories into independent pieces; avoid big-branch merges | 1.5–2x throughput when 2–3 devs work in parallel without stepping on each other. |
+| **Parallelize features** | Feature flags; slice stories into independent pieces; avoid big-branch merges; parallel delivery (§1.4, §4.1.1) | 1.5–2x throughput with 7 devs split across Phase 1 core and Notification + SignalR streams. |
 | **Eliminate rework** | Test-first; PR reviews; clear acceptance criteria; contract tests | Fewer bugs in prod; less back-and-forth; 20–40% less rework. |
 | **Reduce manual QA** | Automated regression (unit, integration, E2E); see [Deliverable 4](04-testing-qa.md) | QA focuses on exploratory; release cycles shrink. |
 | **Faster feedback** | Local dev with Docker Compose or dev containers; Testcontainers for integration | Devs don’t wait for shared DB; fewer “works on my machine” issues. |
@@ -113,12 +131,12 @@ Speed-up comes from **removing waste**, **parallelizing work**, and **automating
 **Example dashboard (conceptual):**
 
 ```text
-  Metric              | Baseline (Sprint 1) | Current (Sprint 4) | Change
-  --------------------|--------------------|--------------------|-------
-  Cycle time (days)   | 6                  | 3                  | -50%
-  Throughput (pts)    | 24                 | 38                 | +58%
-  Deploy frequency    | 2/sprint           | 8/sprint           | 4x
-  PR cycle (hours)    | 18                 | 6                  | -67%
+  Metric               | Baseline (Sprint 1) | Current (Sprint 4) | Change
+  ---------------------|---------------------|--------------------|-------
+  Cycle time (days)    | 6                   | 3                  | -50%
+  Throughput (pts)     | 24                  | 38                 | +58%
+  Deploy frequency     | 2/sprint            | 8/sprint           | 4x
+  PR cycle (hours)     | 18                  | 6                  | -67%
 ```
 
 ---
@@ -127,32 +145,69 @@ Speed-up comes from **removing waste**, **parallelizing work**, and **automating
 
 ### 4.1 High-level roadmap
 
-**Cloud tier mapping:** Phase 1 → Start (~1k users); Phase 2–3 → Transition/Growth (~2k–10k). See [Deliverable 2, §4](02-cloud-setup.md#4-summary-of-monthly-cost-and-setup-tiers) for cost tiers.
+**Cloud tier mapping:** Phase 1–3 align with cost tiers Start, Transition, Growth in [Deliverable 2, §4](02-cloud-setup.md#4-summary-of-monthly-cost-and-setup-tiers) — use those for infrastructure sizing when you scale. Phases here are feature-based, not user-count-based. **Weeks 1–12 are illustrative**; adjust for real portfolio and resource availability. **Phasing rationale:** Event sourcing ships first in the monolith; SignalR and Notification microservice are added in Phase 2. **When does the business see a clickable product?** Phase 1 delivers API + Swagger; external integrators and internal tools can use it. A minimal UI slice (task list + create) is available as an optional Phase 1 item for early demos. The full web UI (SPA) ships in Phase 3. See [Deliverable 1, §1.5](01-solution-architecture.md#15-decision-best-option-for-this-system--option-b-macroservices-with-core--notification).
 
 ```text
-  Phase 1 (Weeks 1–4):  Foundation
+  Phase 1 (Weeks 1–4):  Event sourcing in monolith (ship first)
   ├── CI/CD pipeline (build, test, deploy Dev)
   ├── Local dev environment (Docker Compose / dev container)
-  ├── Core API skeleton + event store + projection
-  └── Basic auth (Azure AD integration)
-
-  Phase 2 (Weeks 5–8):  Core features
-  ├── Task CRUD, assignments, status, history (event sourcing)
+  ├── Event store + projection; task CRUD, GET /tasks/{id}/history
   ├── Comments, attachments (metadata + presigned URLs)
-  ├── Notification outbox → Service Bus → Notification service
-  └── Automated tests (unit, integration, key E2E)
+  ├── Basic auth (Azure AD integration)
+  ├── Optional: minimal UI slice (task list + create) for early demo
+  └── Automated tests (unit, integration)
+  No SignalR, no Notification service — all in one deployable
+  MVP demo: API + Swagger; optional minimal UI for early demos. Full web UI in Phase 3.
+
+  Phase 2 (Weeks 5–8):  Real-time + notifications
+  ├── Azure SignalR Service — in-view alerts when task is edited
+  ├── Notification outbox → Service Bus → Notification microservice
+  ├── Event handlers publish to queue and SignalR on append
+  └── Key E2E tests (including SignalR, notification flow)
 
   Phase 3 (Weeks 9–12):  Polish and scale
-  ├── Web UI (SPA) for core flows
+  ├── Web UI (SPA) for core flows (SignalR integration for live updates)
   ├── Overdue / SLA scheduler
   ├── Production deploy pipeline, monitoring, runbooks
   └── Performance baseline, load tests
 
   Phase 4 (Ongoing):  Iterate
   ├── Feature flags, external API polish
-  ├── Scale-out (read replicas, Notification microservice)
+  ├── Scale-out (read replicas)
   └── UAT, go-live, support
 ```
+
+### 4.1.1 Parallel delivery (fast timeline, multiple teams)
+
+**When to use:** Fast delivery is required and **multiple teams** are available. Phase 1 and Phase 2 can run in **parallel** after defining the event contract upfront.
+
+**Dependency:** SignalR and the Notification service both need the event-sourcing write path (append event → update projection) to publish and push. Define the event contract (event types, message shapes) in **week 1** so teams can work independently.
+
+**Parallel workstreams** (7 devs: 4 on Team A, 3 on Team B; 3 QA split across streams):
+
+| Team / stream | Work | Can start |
+|---------------|------|------------|
+| **Team A (4 devs)** | Phase 1: event store, projection, task CRUD, GET /history, comments, attachments | Day 1 |
+| **Team B (3 devs)** | Notification microservice, SignalR hub, client wiring. Test with mock publisher against contract. | Week 1 (after contract) |
+| **QA (3)** | 1 per stream: refinement, automation, exploratory; plus cross-cutting E2E when integrated | Day 1 / Week 1 |
+
+**Integration (sequential):** When Phase 1’s write path is ready, add in event handlers: publish to Service Bus, push to SignalR. Small merge; typically 1–2 days.
+
+**Timeline (example):**
+
+```text
+  Week 1:  Contract (TaskCreated, TaskAssigned, StatusChanged, etc.)
+           Team A: Phase 1 (event store, projection, CRUD)
+           Team B: Notification microservice (mock publisher)
+           Team B/C: SignalR hub + client
+
+  Weeks 2–3:  Teams continue in parallel; Phase 1 write path completes
+
+  Week 4:    Integration: wire publish + push into event handlers
+             E2E verification
+```
+
+**Prerequisites:** Contract agreed in sprint 0 or week 1; mock/stub tooling for independent testing. With 7 devs + 3 QA, split as above; see §1.4 for full allocation.
 
 ### 4.2 Risk identification
 
@@ -191,7 +246,21 @@ Speed-up comes from **removing waste**, **parallelizing work**, and **automating
 
 All tooling is Azure-based: Azure DevOps (Boards, Repos, Pipelines, Wiki), Teams, Application Insights, Azure Monitor.
 
-**Risk log (minimal):** Risk | Likelihood | Impact | Mitigation | Status
+**Risk log format and example:**
+
+| Risk | Likelihood | Impact | Mitigation | Owner | Status |
+|------|------------|--------|------------|-------|--------|
+| Scope creep threatens Phase 1 timeline | High | High | Hard sprint capacity; defer low-value items; PO says "no" | Scrum Master | Active |
+| Key person dependency on auth module | Medium | High | Pair programming; document runbook; cross-train | Tech Lead | Mitigating |
+
+### 4.5 Stakeholder and governance (PO lens)
+
+| Practice | Recommendation |
+|----------|-----------------|
+| **Sprint review demos** | Demo working software every sprint; Product Owner accepts or rejects; backlog adjusted from feedback. |
+| **Steering cadence** | Bi-weekly or monthly steering with sponsors/stakeholders; show roadmap progress, risks, and decisions needed. |
+| **Go-live criteria** | Explicit checklist before production: SLO thresholds met (e.g. p95 latency < 500ms, error rate < 0.1%); UAT sign-off; rollback owner assigned; runbook validated. |
+| **Rollback owner** | Tech Lead or on-call owns rollback decision and execution; document in runbook; practice slot-swap rollback in staging. |
 
 ---
 
@@ -204,3 +273,4 @@ All tooling is Azure-based: Azure DevOps (Boards, Repos, Pipelines, Wiki), Teams
 | **Measurement** | DORA-inspired metrics (cycle time, throughput, deploy frequency, PR cycle); baseline and track changes. |
 | **Roadmap** | Foundation → Core features → Polish → Iterate; phases of 4 weeks. |
 | **Risk management** | Identify risks; mitigate proactively; review each sprint; escalate when timeline is threatened. |
+| **Stakeholder / governance** | Sprint review demos; steering cadence; explicit go-live criteria (SLO, UAT, rollback owner). |

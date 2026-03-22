@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Task Management System — Assignment Summary</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #1a1a2e; color: #eee; }
+    .slide { min-height: 100vh; padding: 3rem 4rem; display: flex; flex-direction: column; justify-content: center; }
+    .slide h1 { font-size: 2.2rem; margin-bottom: 1rem; color: #00d4ff; border-bottom: 2px solid #00d4ff; padding-bottom: 0.5rem; }
+    .slide h2 { font-size: 1.6rem; margin: 2rem 0 1rem; color: #7dd3fc; }
+    .slide ul { list-style: none; }
+    .slide li { padding: 0.5rem 0; padding-left: 1.5rem; position: relative; }
+    .slide li::before { content: "▸"; position: absolute; left: 0; color: #00d4ff; }
+    .slide p { margin: 0.5rem 0; line-height: 1.6; }
+    .slide code { background: rgba(0,212,255,0.15); padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.95em; }
+    .nav { position: fixed; bottom: 2rem; right: 2rem; display: flex; gap: 1rem; z-index: 100; }
+    .nav button { padding: 0.5rem 1rem; background: #00d4ff; color: #1a1a2e; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; }
+    .nav button:hover { background: #7dd3fc; }
+    .nav span { color: #888; align-self: center; }
+    .title-slide { text-align: center; }
+    .title-slide h1 { font-size: 2.8rem; border: none; }
+    .title-slide p { font-size: 1.3rem; color: #aaa; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <div class="slide title-slide" id="slide1">
+    <h1>Task Management System</h1>
+    <p>Assignment Summary — Architecture, Cloud, API, Testing & Process</p>
+  </div>
+
+  <div class="slide" id="slide2">
+    <h1>Overview — Problem Statement</h1>
+    <p style="margin-bottom: 1rem; color: #aaa;">Enterprise task platform: internal staff and external partners work together on tasks.</p>
+    <ul>
+      <li>Create, assign, track tasks; comments and file attachments</li>
+      <li>Who can do what: Azure AD sign-in + role-based access (RBAC)</li>
+      <li>API for integrations (e.g. other systems) + web UI for people</li>
+      <li>Scale: 5K–50K+ users, 100K–1M+ tasks per tenant</li>
+      <li>Start simple (MVP), grow toward event sourcing and notifications</li>
+    </ul>
+  </div>
+
+  <div class="slide" id="slide3">
+    <h1>Deliverable 1: Solution Architecture</h1>
+    <p style="margin-bottom: 1rem; color: #aaa;">We chose macroservices: one main app (core API) + one small service (notifications). Not full microservices (too much overhead), not one blob (notifications would slow the core).</p>
+    <ul>
+      <li>Core monolith: tasks, comments, attachments, auth — one deployable</li>
+      <li>Notification microservice: email, SMS, Teams — separate, scales independently</li>
+      <li>Database: PostgreSQL — event store (every change saved) + projections (fast reads)</li>
+      <li>Service Bus: core publishes events → notification service consumes — no tight coupling</li>
+      <li>Identity: Azure AD (SSO, B2B for external partners)</li>
+      <li>SignalR: real-time push — "someone just edited this task"</li>
+    </ul>
+  </div>
+
+  <div class="slide" id="slide4">
+    <h1>Architecture — Auth, Scale, Observability</h1>
+    <p style="margin-bottom: 1rem; color: #aaa;">Who gets in, who can do what, how we scale and monitor.</p>
+    <ul>
+      <li>Auth: Azure AD SSO (single sign-on), JWT tokens; OAuth2 for app-to-app</li>
+      <li>RBAC: roles (admin, member, viewer) — who can create, assign, delete tasks</li>
+      <li>Scale: stateless API → add more instances; read replicas for queries; Redis for cache</li>
+      <li>Observability: logs, traces, dashboards — Azure Monitor, Application Insights</li>
+      <li>RED metrics: request rate, error rate, latency — SLO targets (e.g. p95 &lt; 500 ms)</li>
+    </ul>
+  </div>
+
+  <div class="slide" id="slide5">
+    <h1>Deliverable 2: Cloud Setup (Azure)</h1>
+    <p style="margin-bottom: 1rem; color: #aaa;">All services run on Azure — no on-prem servers.</p>
+    <ul>
+      <li>Compute: App Service — hosts core API and notification service (separate plans for isolation)</li>
+      <li>Data: PostgreSQL (DB), Redis (cache), Blob Storage (file attachments)</li>
+      <li>Messaging: Service Bus (queues for notifications), SignalR Service (real-time push)</li>
+      <li>Identity: Azure AD; email/SMS via Azure Communication Services</li>
+      <li>Edge: Front Door or App Gateway — load balancing, SSL, WAF (DDoS protection)</li>
+      <li>Secrets: Key Vault; deployments: Azure DevOps Pipelines</li>
+    </ul>
+  </div>
+
+  <div class="slide" id="slide6">
+    <h1>Cloud — Trade-offs & Cost</h1>
+    <p style="margin-bottom: 1rem; color: #aaa;">Decisions that affect performance, cost, and resilience.</p>
+    <ul>
+      <li>Core and notification on separate App Service plans — one can scale without affecting the other</li>
+      <li>Cost: Start ~$120–250/mo (Dev/test) → Growth ~$1,550–2,600/mo (prod-scale)</li>
+      <li>Front Door (global CDN) vs App Gateway (regional) — pick based on user geography</li>
+      <li>Service Bus: Basic (simple queues) → Standard (topics) → Premium (VNet, compliance)</li>
+      <li>Backup: Geo-redundant PostgreSQL and Blob — survive region outage</li>
+    </ul>
+  </div>
+
+  <div class="slide" id="slide7">
+    <h1>Deliverable 3: API Design</h1>
+    <p style="margin-bottom: 1rem; color: #aaa;">REST API for web UI and external systems. Base path: <code style="color: #7dd3fc;">/v1/tasks</code></p>
+    <ul>
+      <li>REST over JSON — POST (create), GET (list/search + get one), PATCH (update), DELETE</li>
+      <li>Related: <code>/tasks/{id}/comments</code>, <code>/tasks/{id}/attachments</code></li>
+      <li>GET /tasks/{id}/history — full audit trail (who changed what, when)</li>
+      <li>Concurrency: If-Match header or version in body — avoid overwriting someone else's edit</li>
+      <li>Framework: ASP.NET Core; docs: OpenAPI/Swagger; testing: Postman</li>
+    </ul>
+  </div>
+
+  <div class="slide" id="slide8">
+    <h1>Deliverable 4: Testing & QA</h1>
+    <p style="margin-bottom: 1rem; color: #aaa;">Automate tests so QA focuses on exploratory work, not repetitive checks.</p>
+    <ul>
+      <li>Pipeline: Build → Test + Security scan → Deploy to Dev → Staging → Prod (with approval)</li>
+      <li>Unit: xUnit — test logic in isolation (NSubstitute for mocks)</li>
+      <li>Integration: WebApplicationFactory + Testcontainers — real DB, test full request flow</li>
+      <li>E2E: Playwright — browser tests; Contract: OpenAPI/Pact — API consumers stay aligned</li>
+      <li>QA shift-left: involved in refinement and acceptance criteria before dev starts</li>
+    </ul>
+  </div>
+
+  <div class="slide" id="slide9">
+    <h1>Deliverable 5: Development Process</h1>
+    <p style="margin-bottom: 1rem; color: #aaa;">How we work: process, team split, and how to speed up without overtime.</p>
+    <ul>
+      <li>Team: 1 leader (tech lead/scrum master), 7 devs, 3 QA — 10 total. Allocation by phase in doc §1.4</li>
+      <li>Scrum (2-week sprints), trunk-based branching. DoR = story ready before pull; DoD = tests + QA sign-off</li>
+      <li>Speed 2–3x without overtime: parallel delivery, CI/CD, automation, feature flags</li>
+      <li><strong>Parallel working:</strong> Week 1 — agree event contract. Then Team A (4 devs) builds Phase 1 core; Team B (3 devs) builds Notification + SignalR. QA split per stream. Integrate when core write path is ready.</li>
+      <li>Metrics: DORA (deploy freq, lead time, MTTR). Risks: scope creep, key-person dependency — mitigate with hard capacity, cross-training</li>
+    </ul>
+  </div>
+
+  <div class="slide" id="slide10">
+    <h1>Project Roadmap (Weeks 1–12)</h1>
+    <p style="margin-bottom: 1rem; color: #aaa;">Phased delivery — each phase is shippable.</p>
+    <ul>
+      <li><strong>Phase 1 (weeks 1–4):</strong> Event store, task CRUD, comments, attachments, auth, CI/CD. Core API works; optional minimal UI.</li>
+      <li><strong>Phase 2 (weeks 5–8):</strong> SignalR (real-time), Notification microservice, Service Bus. Can run in parallel with Phase 1 if event contract agreed early.</li>
+      <li><strong>Phase 3 (weeks 9–12):</strong> Full SPA, scheduler jobs, production deployment pipeline, monitoring.</li>
+      <li><strong>Phase 4:</strong> UAT, go-live, iterate on feedback</li>
+    </ul>
+  </div>
+
+  <div class="slide" id="slide11">
+    <h1>Summary</h1>
+    <p style="margin-bottom: 1rem; color: #aaa;">One-line takeaway per deliverable.</p>
+    <ul>
+      <li><strong>Architecture:</strong> Macroservices — core monolith + Notification microservice; event sourcing; Azure Service Bus + SignalR</li>
+      <li><strong>Cloud:</strong> Azure-native — App Service, PostgreSQL, Redis, Blob, Service Bus, SignalR, Key Vault</li>
+      <li><strong>API:</strong> REST, /tasks CRUD + comments + attachments + history; ASP.NET Core</li>
+      <li><strong>Testing:</strong> CI/CD pipeline; unit, integration, contract, E2E (Playwright); QA shift-left</li>
+      <li><strong>Process:</strong> Team 7 devs + 3 QA; parallel delivery (event contract → Team A core, Team B Notification+SignalR); Scrum, DORA metrics</li>
+    </ul>
+  </div>
+
+  <div class="nav">
+    <button onclick="prev()">← Prev</button>
+    <span id="page">1 / 11</span>
+    <button onclick="next()">Next →</button>
+  </div>
+
+  <script>
+    let current = 1;
+    const total = 11;
+    function go(n) {
+      current = Math.max(1, Math.min(total, n));
+      document.getElementById('slide' + current).scrollIntoView({ behavior: 'smooth' });
+      document.getElementById('page').textContent = current + ' / ' + total;
+    }
+    function prev() { go(current - 1); }
+    function next() { go(current + 1); }
+    document.addEventListener('keydown', e => { if (e.key === 'ArrowRight') next(); if (e.key === 'ArrowLeft') prev(); });
+  </script>
+</body>
+</html>

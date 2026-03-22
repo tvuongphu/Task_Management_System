@@ -2,7 +2,40 @@
 
 **System:** Task Management System for internal and external users — create, assign, and track tasks; comments and file attachments; authentication and authorization; integration API; web UI; notifications (e.g. new assignment, overdue, status changes); cloud-ready, scalable, secure.
 
-**Context:** Enterprise deployment; the system **starts** serving approximately **1,000** users and **grows slowly** over time toward **3,000–10,000** users; **task volume** accumulates (historical tasks, comments, attachments, audit events). **Cloud platform:** Azure-only (no AWS, Google Cloud, or other providers).
+**Context:** Enterprise deployment; **task volume** accumulates over time (historical tasks, comments, attachments, audit events). The design supports growth from initial rollout to larger scale. Although the assignment describes a "simple" Task Management System, this design supports both an **MVP path** (relational tasks + audit table, single deployable) and **enterprise evolution** (event sourcing, macroservices, multi-tenancy) as scale and requirements grow. **Cloud platform:** Azure-only (no AWS, Google Cloud, or other providers).
+
+**Scale assumptions:** Designed for **5,000–50,000+ users** and **100K–1M+ tasks** per tenant, with thousands of concurrent sessions at peak. Migrating toward microservices becomes viable when scale, team count, or independent release cadence demand it.
+
+---
+
+## 0. Executive summary (one-page overview)
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| **Architecture** | **Option B: Macroservices** (core monolith + Notification microservice) | Balances ACID in core with isolation for notifications; avoids microservices overhead for this scale. |
+| **Alternative considered** | Microservices (A) vs Monolith (C) | A: overkill for team size; C: couples notification delivery to core. |
+| **Database** | PostgreSQL (event store + projections) | Strong consistency, managed, Azure-integrated. |
+| **Async** | Azure Service Bus | Decouples notification delivery; independent scaling. |
+| **Identity** | Azure AD (OIDC/SAML), B2B for external users | Enterprise SSO; no custom password storage. |
+| **Real-time** | Azure SignalR Service | Per-task group join; instant alerts when others edit. |
+
+```mermaid
+flowchart LR
+  subgraph choice["Architecture choice"]
+    M["Monolith"] --> B["Macroservices ✓"]
+    B --> MS["Microservices"]
+  end
+  
+  subgraph components["Key components"]
+    API["Core API"]
+    NOTIF["Notification svc"]
+    PG[("PostgreSQL")]
+    Q["Service Bus"]
+  end
+  
+  API --> PG
+  API --> Q --> NOTIF
+```
 
 ---
 
@@ -34,31 +67,7 @@ This section compares **three** placements on the spectrum from **one deployable
 - **Audit / compliance service** (optional separate) — append-only audit API.
 - **API gateway** — routing, auth validation, rate limits; clients talk only to the gateway.
 
-**Diagram (text — visible in any editor, PDF, and Word):**
-
-```text
-                         +---------------+
-                         |  API Gateway  |
-                         +-------+-------+
-                                 |
-     +------------+---------------+---------------+------------+
-     |            |               |               |            |
-     v            v               v               v            v
-+---------+ +-----------+ +---------------+ +-----------+ +---------+
-|  Task   | | User/Org  | | Notification  | | Attachment| |  Audit  |
-| service | |  service  | |   service     | |  service  | | service |
-+----+----+ +-----+-----+ +-------+-------+ +-----+-----+ +----+----+
-     |            |               |               |            |
-     v            v               v               v            v
- PG_tasks    PG_users        PG_notif       PG_files      (append)
-                                                    |            |
-                                                    v            v
-                                              Object        Message
-                                              storage          bus
-     Task, Notification, Attachment, Audit also publish or consume events via the message bus.
-```
-
-**Same figure (Mermaid — renders on GitHub and in [Mermaid Live Editor](https://mermaid.live); in VS Code/Cursor install a “Mermaid” preview extension if needed):**
+**Diagram (Mermaid — renders on GitHub and in [Mermaid Live Editor](https://mermaid.live); in VS Code/Cursor install a “Mermaid” preview extension if needed):**
 
 ```mermaid
 flowchart TB
@@ -114,37 +123,7 @@ flowchart TB
 
 Still uses an **API gateway**, **async messaging** between core and notifications, and clear **contracts** — but **not** one microservice per entity.
 
-**Diagram (text):**
-
-```text
-                    +---------------+
-                    |  API Gateway  |
-                    +-------+-------+
-                            |
-          +-----------------+-----------------+
-          |                 |                 |
-          v                 v                 v
-   +-------------+   +-------------+   +----------------------+
-   |    Core     |   | Notification|   | File and attachment  |
-   |  platform   |   |  delivery   |   | pipeline (optional)  |
-   | tasks users |   |   service   |   +----------+-----------+
-   |  comments   |   +------+------+              |
-   +------+------+          |                     v
-          |                 |              +---------------+
-          v                 v              | Object storage|
-   +-------------+   +-------------+      +---------------+
-   | PostgreSQL  |   | Postgres or |
-   |  primary    |   | notif DB    |
-   +------+------+   +------+------+
-          |                 |
-          +--------+--------+
-                   v
-            +-------------+
-            | Queue/bus   |
-            +-------------+
-```
-
-**Same figure (Mermaid):**
+**Diagram (Mermaid):**
 
 ```mermaid
 flowchart TB
@@ -153,7 +132,6 @@ flowchart TB
   subgraph macros["Macroservices"]
     CORE["Core platform"]
     NOTIF["Notification delivery"]
-    FILE["File pipeline optional"]
   end
 
   PG[("PostgreSQL primary")]
@@ -163,13 +141,11 @@ flowchart TB
 
   GW --> CORE
   GW --> NOTIF
-  GW --> FILE
   CORE --> PG
   CORE --> Q
+  CORE --> OBJ
   NOTIF --> PG_N
   NOTIF --> Q
-  FILE --> OBJ
-  FILE --> Q
 ```
 
 **When it shines:** You want **some** scaling and failure isolation for **notification spikes** or **file processing** without committing to six+ services; a **small platform team** can operate 2–4 services.
@@ -197,19 +173,21 @@ This is the **Monolith** end of the spectrum: maximum **local consistency** and 
 | **Failure isolation** | Blast radius = whole app (mitigated by workers) | Partial isolation | Best *if* resilience patterns mature |
 | **Contract & integration burden** | Internal module APIs | Few external APIs + events | Many APIs, versioning, contract tests |
 | **Time to first reliable release** | Fastest | Medium | Slowest without existing platform |
-| **Fit for 1k users growing to 3k–10k** | **Strong** with horizontal replicas, database tuning, queue | **Strong** if notification/file isolation is a priority | **Often overspecified** unless org/scale demands it |
+| **Fit for typical enterprise growth** | **Strong** with horizontal replicas, database tuning, queue | **Strong** if notification/file isolation is a priority | **Often overspecified** unless org/scale demands it |
 
 *ACID = Atomicity (all-or-nothing), Consistency (data validity), Isolation (no interference between concurrent transactions), Durability (committed data survives crashes).*
 
 ---
 
-### 1.5 Decision: **best option for this system — Option B (core monolith + Notification microservice)**
+### 1.5 Decision: **best option for this system — Option B (macroservices with core + Notification)**
 
 **Chosen approach:** **Option B (macroservices)** — a **core platform monolith** (tasks, users, comments, attachments, notification *logic* and outbox) with a **single shared database (PostgreSQL)**, plus a **dedicated Notification microservice** that handles all delivery (email, SMS, Microsoft Teams, and other channels). The two communicate asynchronously via a **message queue**.
 
+**Naming clarity:** Our "Option B" = macroservices pattern with **two deployables initially** (core monolith + Notification service), not six microservices. The optional file/attachment pipeline in Section 1.2 is deferred; we start with core + notifications only.
+
 **Why not Option A (Microservices)?**
 
-- User and task scale (starting at ~1k users, growing toward 3k–10k) does not justify splitting tasks, users, and comments into separate services. Core flows (create, assign, comment, audit) **benefit from one transactional boundary** in the shared database.
+- For this product's scope, splitting tasks, users, and comments into separate services adds more cost than benefit. Core flows (create, assign, comment, audit) **benefit from one transactional boundary** in the shared database.
 - Microservices (task service, user service, notification service, attachment service, audit service) multiply **operational load** (operations: deploy, monitor, trace, fix) and **distributed consistency** risk — overkill for this scale without a large platform team.
 
 **Why not Option C (pure Monolith with only in-process workers)?**
@@ -227,18 +205,27 @@ This is the **Monolith** end of the spectrum: maximum **local consistency** and 
 
 **Summary for reviewers:** *We recommend **Option B**: a **core monolith** for domain logic and a **shared database**, plus a **Notification microservice** for delivery. The core publishes notification intents to a queue; the Notification service consumes and delivers via email, SMS, Teams, and other providers. This balances **transactional simplicity** in the core with **isolation** and **extensibility** where notifications matter most.*
 
-**Evolution path:** The system **starts** at ~1k users and grows slowly. For the initial deployment, a **Monolith** (Option C) with async workers is acceptable — simpler to operate and lower cost. Plan to extract the **Notification microservice** (move to Option B) when approaching 2–3k users or when notification spikes (e.g. bulk assignments) begin to affect the core API.
+**MVP vs target:** The **target steady-state** is core monolith + Notification microservice (two deployables). The **MVP** may run as a single App Service until the queue consumer is extracted in Phase 2 — one deployable for Phase 1, two for Phase 2 onward.
+
+**Evolution path:** The system **starts** with event sourcing in a **monolith** (one deployable), then adds real-time and notifications in **Phase 2**.
 
 ```text
-  Phase 1 (~1k users)              Phase 2 (~2–3k+ users)
-  Monolith (Option C)       →      Macroservices (Option B)
-  ┌─────────────────────┐         ┌─────────────┐   ┌─────────────────┐
-  │ Core + async workers │         │ Core monolith│   │ Notification    │
-  │ (single App Service) │   →     │ + shared DB  │   │ microservice    │
-  │                     │         │              │   │ (separate scale)│
-  └─────────────────────┘         └─────────────┘   └─────────────────┘
-  Trigger: notification spikes, bulk assignments, or ops need for isolation
+  Phase 1 — Event sourcing in monolith     Phase 2 — Add real-time + notifications
+  ┌─────────────────────────────────┐     ┌─────────────────┐   ┌─────────────────┐
+  │ Core monolith (single App Svc)   │     │ Core monolith   │   │ Notification    │
+  │ · Event store + projection       │  →  │ + SignalR       │   │ microservice    │
+  │ · Task CRUD, GET /history        │     │ (Azure SignalR  │   │ (Service Bus,   │
+  │ · Comments, attachments metadata │     │  Service)       │   │  email, SMS,    │
+  │ · No SignalR, no Notification svc│     │                 │   │  Teams)         │
+  └─────────────────────────────────┘     └─────────────────┘   └─────────────────┘
+  Trigger: ready for real-time alerts + delivery; scale or ops need for isolation
 ```
+
+**Phasing rationale:** Event sourcing from day one avoids a later migration; the monolith delivers task CRUD, full history, and audit first. Phase 2 adds **SignalR** (real-time in-view alerts) and the **Notification microservice** (outbox → Service Bus → email, SMS, Teams). Both are natural extensions of the event-sourcing write path: on event append, publish to queue and push to SignalR.
+
+**Parallel delivery:** When fast delivery is required and multiple teams are available (e.g. 7 devs split: 4 on Phase 1 core, 3 on Notification + SignalR), Phase 1 and Phase 2 can run in parallel. Define the event contract upfront; Team A builds the core, Team B builds Notification service and SignalR against the contract. Integration happens when the write path is ready. See [Deliverable 5, §1.4](05-development-process.md#14-team-allocation-7-devs--3-qa), [§4.1.1](05-development-process.md#411-parallel-delivery-fast-timeline-multiple-teams).
+
+**Alternative (deadline very tight):** If time is constrained, ship with **relational tasks + audit table** first; defer full event sourcing and the Phase 2 scope to a later release. **Event sourcing tradeoffs:** Projection bugs require replay or fix; migration from relational to event store has operational risk. ES is not the default for teams with little prior experience—the relational + audit path is simpler to operate initially.
 
 ---
 
@@ -246,59 +233,13 @@ This is the **Monolith** end of the spectrum: maximum **local consistency** and 
 
 Section 1 compared **Microservices**, **Macroservices**, and **Monolith**. The diagrams below reflect the **chosen** design: **Option B** — a **core platform monolith** with shared database, plus a **dedicated Notification microservice** that consumes from a queue and delivers via email, SMS, Microsoft Teams, and other channels.
 
-**Viewing diagrams:** Plain **text** figures render everywhere. **Mermaid** blocks render on **GitHub** when you push the repo; for local preview use **[mermaid.live](https://mermaid.live)** or a Markdown preview extension that enables Mermaid.
+**Viewing diagrams:** **Mermaid** blocks render on **GitHub** when you push the repo; for local preview use **[mermaid.live](https://mermaid.live)** or a Markdown preview extension that enables Mermaid.
 
 ### 2.1 End-to-end view (components and technology anchors)
 
 This diagram shows **layers** (clients, edge, identity, application, async, data), the **core monolith** as the main application tier, the **Notification microservice** as a separate deployable, and **major technology choices** (relational database, cache, object storage, queue).
 
-**Diagram (text):**
-
-```text
-  +------------------+          +---------------------------+
-  |     Web SPA      |          | External API integrators  |
-  +--------+---------+          +-------------+-------------+
-           |                                    |
-           v                                    v
-  +--------+------------------------------------+---------+
-  | CDN (Content Delivery Network) -> WAF (Web App Firewall) -> Load balancer / API gateway |
-  +---------------------------+---------------------------+
-                              |
-                              v
-  +---------------------------+---------------------------+
-  | Identity: IdP (Identity Provider) OIDC/SAML  Auth  RBAC policy       |
-  +---------------------------+---------------------------+
-                              |
-          +-------------------+-------------------+
-          |                                     |
-          v                                     v
-  +=======================+          +---------------------------+
-  |   Core monolith       |          |  Notification microservice |
-  |   HTTP API (REST)     |          |  email, SMS, Teams, etc.   |
-  |  Tasks Users Comments |          +-------------+---------------+
-  |  Attach metadata      |                        |
-  |  Notif outbox (logic) |                        |
-  +-----------+-----------+                        |
-          |               |                        |
-          v               v                        v
-  +-------+-------+  +----+----+              +---------+
-  | Azure DB for  |  | Azure  |<-------------+ consume |
-  | PostgreSQL    |  |ServiceBus|               | deliver |
-  +-------+-------+       ^                   +---------+
-          |               |
-          v               +------------------+
-   +-------------------+  | Scheduler        |
-   | Azure Cache for   |  | overdue, SLA     |
-   | Redis, Azure Blob |  +------------------+
-   +-------------------+
-
-  Core monolith publishes notification intents to queue. Notification microservice
-  consumes and delivers via email and SMS (Azure Communication Services), Microsoft Teams (Microsoft Graph), etc.
-
-  Optional: Azure Cognitive Search for dashboard or full-text search.
-```
-
-**Same figure (Mermaid):**
+**Diagram (Mermaid):**
 
 ```mermaid
 flowchart TB
@@ -379,7 +320,7 @@ flowchart TB
 | **Identity** | Authenticate users and machines; enforce RBAC (role-based access control) and resource policies on each request. |
 | **Application** | Core monolith: domain logic (tasks, users, comments, attachments, notification outbox); Notification microservice: delivery via email, SMS, Teams, and other channels. |
 | **Async** | Message queue; scheduler for overdue and SLA (service level agreement) rules; core publishes notification intents; Notification service consumes and delivers. |
-| **Data** | Event store + projections (PostgreSQL); cache (Azure Cache for Redis); blobs (Azure Blob Storage); optional search (Azure Cognitive Search). |
+| **Data** | Event store + projections (PostgreSQL); cache (Azure Cache for Redis); blobs (Azure Blob Storage); **Azure SignalR Service** for real-time; optional search (Azure Cognitive Search). |
 
 ---
 
@@ -393,16 +334,19 @@ flowchart TB
 | **Async work** | **Azure Service Bus** (message queue) | Decouples API latency from email/push/webhook delivery; retries and DLQs (dead-letter queues: queues for failed messages) for resilience. |
 | **API style** | **REST** (Representational State Transfer) or **GraphQL** if the team standardizes on it | REST is straightforward for integrators; GraphQL can reduce chatty UIs — either is acceptable if documented and versioned. |
 | **Web UI** | **SPA** (single-page application; e.g. React, Vue, Angular) behind **Azure CDN** | Global users benefit from static asset caching at the edge. |
+| **Real-time updates** | **Azure SignalR Service** (or ASP.NET Core SignalR) | When multiple users have the same task open, edits push instant "task updated" alerts; clients join per-task groups; scales with many concurrent viewers. See Section 7. |
 
 ### 3.1 Event sourcing for task state
 
-**Task tracking** requires a record of every state change. The system uses **event sourcing** for task state:
+**Recommendation:** For teams **new to event sourcing**, start with **relational tasks + audit table** — simpler to operate and debug. Treat **full event sourcing** as an evolution path when you need temporal queries, richer audit, or event-driven integrations. The relational model can be migrated to event sourcing later with careful planning; the API surface remains the same.
+
+**Task tracking** requires a record of every state change. The system uses **event sourcing** for task state (or relational + audit if starting simple):
 
 | Component | Role |
 |-----------|------|
 | **Event store** | Append-only `task_events` table in PostgreSQL. Each change (status, assignee, priority, title, etc.) is stored as an event: `TaskCreated`, `TaskAssigned`, `StatusChanged`, `TaskCompleted`, etc. |
 | **Projection** | `tasks` table holds the current state, derived from events. Updated synchronously when events are appended. Used for fast reads (list, detail). |
-| **Write path** | API receives PATCH; appends one or more events to the event store; updates projection; publishes to Service Bus for notifications. No UPDATEs on the event store — append-only. |
+| **Write path** | API receives PATCH; appends one or more events to the event store; updates projection. In **Phase 2**, the write path also publishes to Service Bus for notifications and pushes to SignalR for real-time alerts. In **Phase 1**, only append + projection run; queue publish and SignalR push are added when the Notification service and SignalR are live. No UPDATEs on the event store — append-only. |
 | **Read path** | List and detail: read from projection. Full history: replay events or query the event store. |
 
 **Benefits:** Append-only writes scale well with many status changes; every change is captured; supports temporal queries (“what did this task look like at 3pm?”); events can drive notifications and analytics.
@@ -431,13 +375,17 @@ flowchart TB
 - Same codebase and API surface; **tenant and role** distinguish capabilities (e.g. external users may not create org-wide reports).
 - **Audit** all sensitive actions (assignment changes, permission changes, downloads) for compliance.
 
+### 4.4 Multi-tenancy and isolation
+
+**Isolation model:** Data is partitioned by tenant (organization). Every row in task, comment, user, and attachment tables includes a `tenant_id`; all queries filter by tenant. The **API base URL** uses a tenant subdomain (e.g. `api.{tenant}.taskmgmt.example.com`) — routing resolves `{tenant}` from the host and injects it into the request context; the token is validated against that tenant. **Encryption scope:** Azure Blob Storage supports per-container encryption keys; for stricter isolation, consider separate resource groups or key vaults per tenant tier. For most deployments, row-level `tenant_id` plus subdomain routing and token validation is sufficient; physical separation (separate DB per tenant) is an option only for very large or regulated tenants.
+
 ---
 
 ## 5. Scalability (enterprise users and task volume)
 
 ### 5.1 Enterprise context
 
-This architecture targets **enterprise deployment**: the system **starts** at ~**1,000** users and **grows slowly** toward **3,000–10,000**; **task volume** accumulates over time (historical tasks, comments, attachments, notifications). The design supports **multi-tenancy**, **compliance** (audit trails, access control), and **24/7 operation**. The scaling choices below assume this growth path.
+This architecture targets **enterprise deployment**: **task volume** accumulates over time (historical tasks, comments, attachments, notifications). The design supports **multi-tenancy**, **compliance** (audit trails, access control), and **24/7 operation**. The scaling choices below support growth from initial rollout to larger scale.
 
 ### 5.2 Assumptions
 
@@ -452,34 +400,39 @@ This architecture targets **enterprise deployment**: the system **starts** at ~*
 | **Database** | Vertical scale first; add **read replicas** for reporting and heavy list queries; **connection pooling** (e.g. PgBouncer or Azure Database for PostgreSQL built-in pooler). |
 | **Partitioning / archival** | Plan **time-based partitioning** for the event store and archival for notification history if tables grow very large. |
 | **Caching** | Redis for hot keys (task detail, permission summaries) with explicit invalidation on writes. |
-| **Async pipeline** | Core monolith publishes events; **Notification microservice** consumes and scales independently to handle delivery fan-out (email, SMS, Teams). |
+| **Async pipeline** | **Phase 2+:** Core monolith publishes events; **Notification microservice** consumes and scales independently to handle delivery fan-out (email, SMS, Teams). |
 | **Object storage** | Naturally scalable; uploads/downloads can use **presigned URLs** to offload bandwidth from app servers. |
 
 ### 5.4 Resilience
 
-- **Idempotent** notification consumers in the Notification microservice; **dead-letter queues** (DLQ: queues for failed messages) for poison messages.
+- **Phase 2+:** **Idempotent** notification consumers in the Notification microservice; **dead-letter queues** (DLQ: queues for failed messages) for poison messages.
 - **Timeouts and bulkheads** between API and slow dependencies (search, third-party email).
 
 ---
 
 ## 6. Observability
 
+**Phase 1:** Application Insights on the monolith (logs, metrics, traces) from day one. **Phase 2+:** Queue depth, notification metrics, and Notification-microservice tracing apply when the async pipeline is live.
+
 | Pillar | Practice |
 |--------|----------|
 | **Logging** | **Structured JSON** logs with **correlation IDs** (request ID, user ID, tenant ID); central aggregation in **Azure Monitor** and **Log Analytics**. |
-| **Metrics** | **RED** (rate, errors, duration) for APIs; **USE** (utilization, saturation, errors) for datastores where applicable; business metrics (tasks created, notifications sent, queue depth, overdue counts). |
-| **Tracing** | **Distributed tracing** (OpenTelemetry) from edge through API, Notification microservice, and queue — correlates requests across the core monolith and Notification service. |
-| **Dashboards & alerts** | SLO (service level objective) oriented dashboards; alerts on error rate, latency, database connections, queue backlog, failed notification rate. **Example SLO:** p95 latency < 500ms for task API; error rate < 0.1%. |
+| **Metrics** | **RED** (rate, errors, duration) for APIs; **USE** (utilization, saturation, errors) for datastores where applicable; business metrics (tasks created; **Phase 2+:** notifications sent, queue depth, overdue counts). |
+| **Tracing** | **Phase 2+:** Distributed tracing (OpenTelemetry) from edge through API, Notification microservice, and queue — correlates requests across the core monolith and Notification service. |
+| **Dashboards & alerts** | SLO-oriented dashboards; alerts on error rate, latency, database connections; **Phase 2+:** queue backlog, failed notification rate. **Example SLO:** p95 latency < 500ms for task API; error rate < 0.1%. |
 | **Audit trail** | Event store provides immutable task history; additional append-only **audit events** in PostgreSQL for security and compliance (who changed what, when). |
 
 ---
 
 ## 7. Feature mapping (comments, attachments, notifications)
 
+**Phase awareness:** Rows that use SignalR, queue publish, or the Notification microservice apply from **Phase 2** onward. In Phase 1, only event sourcing + projection run; no SignalR, no queue publish.
+
 | Feature | Architectural approach |
 |---------|-------------------------|
 | **Task state and tracking** | **Event sourcing** — append-only event store; projection for current state; every status/assignee/priority change is an event. Supports full history and temporal queries. |
-| **Comments** | Stored relationally with task FK (foreign key); real-time optional via WebSockets or polling; notification on @mention if product requires it. |
+| **Real-time task updates** | **Azure SignalR Service** — when a user opens a task, the SPA joins group `task-{id}`. When another user edits that task, the API pushes to the group; all viewers receive an instant "task updated" alert. Users with many tabs open get updates only for tasks they are viewing. No polling. |
+| **Comments** | Stored relationally with task FK (foreign key); real-time via SignalR (same hub, group per task); notification on @mention if product requires it. |
 | **File upload** | Client uploads to **presigned URL** to object storage; API persists **metadata** (size, MIME, checksum, scan status) in PostgreSQL; optional **malware scanning** in async worker. |
 | **New task assigned** | `TaskAssigned` event appended; projection updated; event published to **queue** → **Notification microservice** consumes and delivers via email, SMS, Teams, etc. |
 | **Overdue / stale / status change** | **Scheduler** evaluates rules; emits events to queue; **Notification microservice** delivers. Status changes flow through event store and projection. |
@@ -497,5 +450,5 @@ This architecture targets **enterprise deployment**: the system **starts** at ~*
 
 ## 9. Conclusion
 
-After comparing **Microservices**, **Macroservices**, and **Monolith**, the **recommended** architecture is **Option B**: a **core monolith** (tasks, users, comments, attachments, notification logic) with a **shared PostgreSQL** database, plus a **Notification microservice** that consumes from **Azure Service Bus** and delivers via **Azure Communication Services** (email, SMS), **Microsoft Teams**, and other channels. The platform is **Azure-native**: Azure Blob Storage for attachments, Azure Monitor and Log Analytics for observability. **External users** are authorized via **SSO** (single sign-on) through Azure AD B2B or federated IdPs. **OIDC/SAML**, **RBAC** (role-based access control) plus resource policies, and structured logging, metrics, and tracing address authentication, scale, and observability for a user base that starts at ~1k and grows toward 3k–10k, with a growing task corpus.
+After comparing **Microservices**, **Macroservices**, and **Monolith**, the **recommended** architecture is **Option B**: a **core monolith** (tasks, users, comments, attachments, notification logic) with a **shared PostgreSQL** database, plus a **Notification microservice** that consumes from **Azure Service Bus** and delivers via **Azure Communication Services** (email, SMS), **Microsoft Teams**, and other channels. **Azure SignalR Service** provides real-time updates so users viewing the same task receive instant alerts when it is edited. The platform is **Azure-native**: Azure Blob Storage for attachments, Azure Monitor and Log Analytics for observability. **External users** are authorized via **SSO** (single sign-on) through Azure AD B2B or federated IdPs. **OIDC/SAML**, **RBAC** (role-based access control) plus resource policies, and structured logging, metrics, and tracing address authentication, scale, and observability for enterprise scale, with a growing task corpus.
 
