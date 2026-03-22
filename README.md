@@ -4,6 +4,17 @@ Submission materials for the **Task Management System** assignment.
 
 **Problem statement:** A simple Task Management System for internal and external users. The system allows users to create, assign, and track tasks; supports authentication & authorization; provides an API for integrations; has a web UI; and is cloud-ready, scalable, and secure.
 
+## Summary (quick overview)
+
+A slide-style summary of all deliverables is available. Choose either format — same content:
+
+- **[Task-Management-Assignment-Summary.pptx](docs/Task-Management-Assignment-Summary.pptx)** — Click to open; on GitHub, the file renders as a slide preview.
+- **[assignment-summary.html](docs/assignment-summary.html)** — Open in a browser for interactive slides (arrow keys or nav buttons).
+
+---
+
+## Deliverables (full docs)
+
 | Document | Description |
 |----------|-------------|
 | [docs/01-solution-architecture.md](docs/01-solution-architecture.md) | **Deliverable 1** — Solution architecture, diagrams, technology choices, authentication, scalability, observability |
