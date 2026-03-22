@@ -211,10 +211,14 @@ Speed-up comes from **removing waste**, **parallelizing work**, and **automating
 
 ### 4.2 Risk identification
 
+**Prioritization:** Act first on High likelihood × High impact; then High × Medium. Use risk score (likelihood × impact) to order mitigation effort.
+
 | Risk | Likelihood | Impact | Category |
 |------|------------|--------|----------|
 | **Scope creep** | High | High | Planning |
 | **Key person dependency** | Medium | High | People |
+| **Event contract drift** (Team A/B parallel delivery) | Medium | High | Technical |
+| **Parallel integration surprises** (merge/integration when Team A + B join) | Medium | Medium | Technical |
 | **Integration delays** (Azure AD, Service Bus, etc.) | Medium | Medium | External |
 | **Unclear requirements** | High | Medium | Requirements |
 | **Technical debt** (rushed code) | Medium | Medium | Technical |
@@ -227,7 +231,9 @@ Speed-up comes from **removing waste**, **parallelizing work**, and **automating
 | Risk | Mitigation |
 |------|------------|
 | **Scope creep** | Hard sprint capacity; backlog prioritization; “no” is acceptable; defer low-value items. |
-| **Key person dependency** | Pair programming; docs and runbooks; cross-training; shared ownership of critical areas. |
+| **Key person dependency** | Pair programming; docs and runbooks; cross-training; shared ownership. With 7 devs, bus factor is low — spread critical knowledge. |
+| **Event contract drift** | Freeze contract in week 1; change-control: any change requires both Team A and Team B lead approval; document in OpenAPI or shared schema. |
+| **Parallel integration surprises** | Integration spike in week 2–3 (stub only); reserve 1–2 days buffer for merge; test against contract in both streams. |
 | **Integration delays** | Stub/mock external services in dev; start integration early; parallel work on UI and API. |
 | **Unclear requirements** | Refinement before sprint; spike or proof-of-concept for unknowns; clarify with stakeholders early. |
 | **Technical debt** | Allocate 10–15% sprint capacity to tech debt; no skipping tests; refactor incrementally. |
@@ -237,21 +243,24 @@ Speed-up comes from **removing waste**, **parallelizing work**, and **automating
 
 ### 4.4 Risk management process
 
+With 1 leader (Tech Lead / Scrum Master), they own risk review and escalation. All tooling is Azure-based: Azure DevOps (Boards, Repos, Pipelines, Wiki), Teams, Application Insights, Azure Monitor.
+
 | Activity | Frequency | Owner |
 |----------|-----------|-------|
-| **Risk review** | Every sprint planning | Scrum Master / Tech Lead |
-| **Update risk log** | As new risks emerge | Anyone; log in backlog or wiki |
-| **Mitigation check** | Mid-sprint | Stand-up; “is our mitigation working?” |
-| **Escalation** | When impact threatens timeline | Tech Lead → Product Owner → Stakeholders |
-
-All tooling is Azure-based: Azure DevOps (Boards, Repos, Pipelines, Wiki), Teams, Application Insights, Azure Monitor.
+| **Risk review** | Every sprint planning | Tech Lead (leader) |
+| **Update risk log** | As new risks emerge | Anyone; Tech Lead consolidates in Azure DevOps Wiki |
+| **Mitigation check** | Mid-sprint stand-up + retrospective | “Is our mitigation working?” |
+| **Steering summary** | Bi-weekly / monthly steering | High-impact risks summarized for stakeholders |
+| **Escalation** | When: 2+ sprints behind; critical path blocked >1 sprint; High-impact risk materializes | Tech Lead → Product Owner → Stakeholders |
 
 **Risk log format and example:**
 
-| Risk | Likelihood | Impact | Mitigation | Owner | Status |
-|------|------------|--------|------------|-------|--------|
-| Scope creep threatens Phase 1 timeline | High | High | Hard sprint capacity; defer low-value items; PO says "no" | Scrum Master | Active |
-| Key person dependency on auth module | Medium | High | Pair programming; document runbook; cross-train | Tech Lead | Mitigating |
+| Risk | Likelihood | Impact | Mitigation | Owner | Status | Next review |
+|------|------------|--------|------------|-------|--------|-------------|
+| Scope creep threatens Phase 1 timeline | High | High | Hard sprint capacity; defer low-value items; PO says "no" | Tech Lead | Active | Sprint 2 planning |
+| Key person dependency on auth module | Medium | High | Pair programming; document runbook; cross-train | Tech Lead | Mitigating | Mid-sprint 2 |
+
+**Status lifecycle:** Active → Mitigating → Resolved (or Accepted, if we consciously accept the risk).
 
 ### 4.5 Stakeholder and governance (PO lens)
 
@@ -272,5 +281,5 @@ All tooling is Azure-based: Azure DevOps (Boards, Repos, Pipelines, Wiki), Teams
 | **Speed-up (no overtime)** | CI/CD, automated tests, feature flags, parallel work, AI tooling, reduce meetings and context switching. |
 | **Measurement** | DORA-inspired metrics (cycle time, throughput, deploy frequency, PR cycle); baseline and track changes. |
 | **Roadmap** | Foundation → Core features → Polish → Iterate; phases of 4 weeks. |
-| **Risk management** | Identify risks; mitigate proactively; review each sprint; escalate when timeline is threatened. |
+| **Risk management** | Prioritize High×High; review each sprint; Tech Lead owns; log in Azure DevOps Wiki; escalate when 2+ sprints behind or critical path blocked. |
 | **Stakeholder / governance** | Sprint review demos; steering cadence; explicit go-live criteria (SLO, UAT, rollback owner). |
